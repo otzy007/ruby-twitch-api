@@ -123,6 +123,10 @@ module Twitch
       Response.new(Video, get('videos', options))
     end
 
+    def get_channel_followers(options = {})
+      Response.new(UserFollow, get('channels/followers', options))
+    end
+
     private
 
     def get(resource, params)
