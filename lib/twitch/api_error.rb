@@ -2,7 +2,7 @@
 
 module Twitch
   # An error returned by the API.
-  class ApiError < StandardError
+  class APIError < StandardError
     # HTTP status code of the response.
     attr_reader :status_code
     # Body content of the response.
@@ -12,8 +12,7 @@ module Twitch
       @status_code = status_code
       @body = body
 
-      msg = "The server returned error #{status_code}"
-      super(msg)
+      super(self.body['message'])
     end
   end
 end

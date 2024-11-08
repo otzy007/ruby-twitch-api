@@ -1,126 +1,146 @@
 # frozen_string_literal: true
 
 require 'faraday'
-require 'faraday_middleware'
+require 'faraday/parse_dates'
+require 'faraday/retry'
+require 'twitch_oauth2'
 
 require_relative 'response'
+
 require_relative 'api_error'
 require_relative 'bits_leader'
+require_relative 'category'
+require_relative 'channel'
+require_relative 'cheermote'
 require_relative 'clip'
+require_relative 'custom_reward'
+require_relative 'editor'
 require_relative 'entitlement_grant_url'
+require_relative 'extension'
+require_relative 'extensions_by_types'
 require_relative 'game'
 require_relative 'game_analytic'
+require_relative 'moderation_event'
+require_relative 'moderator'
 require_relative 'stream'
 require_relative 'stream_marker'
 require_relative 'stream_metadata'
+require_relative 'subscription'
 require_relative 'user'
+require_relative 'user_ban'
 require_relative 'user_follow'
+require_relative 'redemption'
 require_relative 'video'
 
 module Twitch
+  # Core class for requests
   class Client
-    # Helix API endpoint.
-    API_ENDPOINT = 'https://api.twitch.tv/helix'
+    # Base connection to Helix API.
+    CONNECTION = Faraday.new(
+      'https://api.twitch.tv/helix', {
+        headers: { 'User-Agent': "twitch-api ruby client #{Twitch::VERSION}" }
+      }
+    ) do |faraday|
+      faraday.request :retry,
+        exceptions: [*Faraday::Retry::Middleware::DEFAULT_EXCEPTIONS, Faraday::ConnectionFailed]
+
+      faraday.response :parse_dates
+
+      faraday.request :json
+      faraday.response :json
+    end
+
+    attr_reader :tokens
 
     # Initializes a Twitch client.
     #
-    # - client_id [String] The client ID.
-    # Used as the Client-ID header in a request.
-    # - access_token [String] An access token.
-    # Used as the Authorization header in a request.
-    # Any "Bearer " prefix will be stripped.
-    # - with_raw [Boolean] Whether to include raw HTTP response
-    # Intended for testing/checking API results
-    def initialize(client_id: nil, access_token: nil, with_raw: false)
-      if client_id.nil? && access_token.nil?
-        raise 'An identifier token (client ID or bearer token) is required'
-      end
+    # - tokens [TwitchOAuth2::Tokens] Tokens object with their refreshing logic inside.
+    # All client and authentication information (`client_id`, `:scopes`, etc.) stores there.
+    def initialize(tokens:)
+      @tokens = tokens
 
-      if client_id && access_token
-        warn <<~TEXT
-          WARNING:
-          It is recommended that only one identifier token is specified.
-          Unpredictable behavior may follow.
-        TEXT
-      end
+      CONNECTION.headers['Client-ID'] = self.tokens.client.client_id
 
-      headers = {
-        "User-Agent": "twitch-api ruby client #{Twitch::VERSION}"
-      }
-      headers['Client-ID'] = client_id unless client_id.nil?
-
-      unless access_token.nil?
-        access_token = access_token.gsub(/^Bearer /, '')
-        headers['Authorization'] = "Bearer #{access_token}"
-      end
-
-      @conn = Faraday.new(API_ENDPOINT, { headers: headers }) do |faraday|
-        faraday.request :json
-        faraday.response :json
-        faraday.adapter Faraday.default_adapter
-      end
-
-      @with_raw = with_raw
+      renew_authorization_header
     end
 
     def create_clip(options = {})
-      Response.new(Clip, post('clips', options))
+      initialize_response Clip, post('clips', options)
     end
 
     def create_entitlement_grant_url(options = {})
-      Response.new(EntitlementGrantUrl, post('entitlements/upload', options))
-    end
-
-    def create_stream_marker(options = {})
-      Response.new(StreamMarker, post('streams/markers', options))
+      initialize_response EntitlementGrantUrl, post('entitlements/upload', options)
     end
 
     def get_clips(options = {})
-      Response.new(Clip, get('clips', options))
+      initialize_response Clip, get('clips', options)
     end
 
     def get_bits_leaderboard(options = {})
-      Response.new(BitsLeader, get('bits/leaderboard', options))
+      initialize_response BitsLeader, get('bits/leaderboard', options)
     end
 
-    def get_games(options = {})
-      Response.new(Game, get('games', options))
+    def get_cheermotes(options = {})
+      initialize_response Cheermote, get('bits/cheermotes', options)
     end
 
-    def get_top_games(options = {})
-      Response.new(Game, get('games/top', options))
-    end
+    require_relative 'client/extensions'
+    include Extensions
 
-    def get_game_analytics(options = {})
-      Response.new(GameAnalytic, get('analytics/games', options))
-    end
+    require_relative 'client/games'
+    include Games
 
-    def get_stream_markers(options = {})
-      Response.new(StreamMarkerResponse, get('streams/markers', options))
-    end
+    require_relative 'client/moderation'
+    include Moderation
 
-    def get_streams(options = {})
-      Response.new(Stream, get('streams', options))
-    end
+    require_relative 'client/streams'
+    include Streams
 
-    def get_streams_metadata(options = {})
-      Response.new(StreamMetadata, get('streams/metadata', options))
-    end
-
-    def get_users_follows(options = {})
-      Response.new(UserFollow, get('users/follows', options))
-    end
-
-    def get_users(options = {})
-      Response.new(User, get('users', options))
-    end
-
-    def update_user(options = {})
-      Response.new(User, put('users', options))
-    end
+    require_relative 'client/subscriptions'
+    include Subscriptions
 
     def get_videos(options = {})
-      Response.new(Video, get('videos', options))
+      initialize_response Video, get('videos', options)
+    end
+
+    require_relative 'client/users'
+    include Users
+
+    require_relative 'client/custom_rewards'
+    include CustomRewards
+
+    ## https://dev.twitch.tv/docs/api/reference#get-channel-information
+    def get_channels(options = {})
+      initialize_response Channel, get('channels', options)
+    end
+
+    ## https://dev.twitch.tv/docs/api/reference/#search-channels
+    def search_channels(options = {})
+      initialize_response Channel, get('search/channels', options)
+    end
+
+    ## https://dev.twitch.tv/docs/api/reference#modify-channel-information
+    def modify_channel(options = {})
+      response = patch('channels', options)
+
+      return true if response.body.empty?
+
+      response.body
+    end
+
+    ## https://dev.twitch.tv/docs/api/reference/#start-commercial
+    def start_commercial(options = {})
+      initialize_response nil, post('channels/commercial', options)
+    end
+
+    ## https://dev.twitch.tv/docs/api/reference/#get-channel-editors
+    def get_channel_editors(options = {})
+      initialize_response Editor, get('channels/editors', options)
+    end
+
+    ## https://dev.twitch.tv/docs/api/reference/#search-categories
+    def search_categories(options = {})
+      initialize_response Category, get('search/categories', options)
     end
 
     def get_channel_followers(options = {})
@@ -129,30 +149,32 @@ module Twitch
 
     private
 
-    def get(resource, params)
-      http_res = @conn.get(resource, params)
-      finish(http_res)
+    def initialize_response(data_class, http_response)
+      Response.new(data_class, http_response: http_response)
     end
 
-    def post(resource, params)
-      http_res = @conn.post(resource, params)
-      finish(http_res)
+    %w[get post put patch].each do |http_method|
+      define_method http_method do |resource, params|
+        request http_method, resource, params
+      end
     end
 
-    def put(resource, params)
-      http_res = @conn.put(resource, params)
-      finish(http_res)
+    def renew_authorization_header
+      CONNECTION.headers['Authorization'] = "Bearer #{tokens.access_token}"
     end
 
-    def finish(http_res)
-      unless http_res.success?
-        raise ApiError.new(http_res.status, http_res.body)
+    def request(http_method, resource, params)
+      http_response = CONNECTION.public_send http_method, resource, params
+
+      if http_response.status == 401
+        renew_authorization_header
+
+        http_response = CONNECTION.public_send http_method, resource, params
       end
 
-      {
-        http_res: http_res,
-        with_raw: @with_raw
-      }
+      return http_response if http_response.success?
+
+      raise APIError.new(http_response.status, http_response.body)
     end
   end
 end

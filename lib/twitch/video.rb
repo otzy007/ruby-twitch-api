@@ -5,8 +5,6 @@ require 'time'
 module Twitch
   # A captured broadcast or portion of a broadcast.
   class Video
-    DATE_ATTRIBUTES = %i[created_at published_at].freeze
-
     # ID of the video.
     attr_reader :id
     # Title of the video.
@@ -33,17 +31,14 @@ module Twitch
     attr_reader :user_name
     # Viewability of the video (public or private)
     attr_reader :viewable
-    # Duration of the video, in the format
-    # 0h0m0s
+    # Duration of the video, in the format `0h0m0s`
     attr_reader :duration
+    # ID of the original stream if the `type` is archive; nil otherwise
+    attr_reader :stream_id
 
     def initialize(attributes = {})
       attributes.each do |key, value|
-        if DATE_ATTRIBUTES.include?(key.to_sym)
-          instance_variable_set("@#{key}", Time.parse(value))
-        else
-          instance_variable_set("@#{key}", value)
-        end
+        instance_variable_set :"@#{key}", value
       end
     end
   end
