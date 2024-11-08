@@ -36,14 +36,6 @@ module Twitch
         raise 'An identifier token (client ID or bearer token) is required'
       end
 
-      if client_id && access_token
-        warn <<~TEXT
-          WARNING:
-          It is recommended that only one identifier token is specified.
-          Unpredictable behavior may follow.
-        TEXT
-      end
-
       headers = {
         "User-Agent": "twitch-api ruby client #{Twitch::VERSION}"
       }
